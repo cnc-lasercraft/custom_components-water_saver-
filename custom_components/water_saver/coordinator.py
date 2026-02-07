@@ -40,8 +40,8 @@ class WaterSaverCoordinator:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
-        self.name = entry.data[CONF_NAME]
-        self.topic = entry.data[CONF_TOPIC]
+        self.name = entry.options.get(CONF_NAME, entry.data.get(CONF_NAME))
+        self.topic = entry.options.get(CONF_TOPIC, entry.data.get(CONF_TOPIC))
 
         self.store = WaterSaverStore(hass)
         self.periods: PeriodState | None = None
