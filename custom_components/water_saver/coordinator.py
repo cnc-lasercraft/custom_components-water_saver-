@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.components import mqtt
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
@@ -67,18 +67,25 @@ class WaterSaverCoordinator:
             self._handle_payload(msg.payload)
 
         self._unsub_mqtt = await mqtt.async_subscribe(
-            self.hass, self.topic, _msg_received, qos=0, encoding="utf-8"
+            self.hass,
+            self.topic,
+            _msg_received,
+            qos=0,
+            encoding="utf-8",
         )
 
         # Update "last_seen_min" every minute
         self._unsub_tick = async_track_time_interval(
-            self.hass, self._tick_last_seen, timedelta(minutes=1)
+            self.hass,
+            self._tick_last_seen,
+            timedelta(minutes=1),
         )
 
     async def async_shutdown(self) -> None:
         if self._unsub_mqtt:
             self._unsub_mqtt()
             self._unsub_mqtt = None
+
         if self._unsub_tick:
             self._unsub_tick()
             self._unsub_tick = None
@@ -90,6 +97,7 @@ class WaterSaverCoordinator:
     def _tick_last_seen(self, _now: datetime) -> None:
         if self.data.last_rx_utc is None:
             return
+
         mins = int((dt_util.utcnow() - self.data.last_rx_utc).total_seconds() // 60)
         if self.data.last_seen_min != mins:
             self.data.last_seen_min = mins
@@ -116,13 +124,19 @@ class WaterSaverCoordinator:
 
         self.data.total_l = total_l
         self.data.target_l = (
-            (float(obj["target_m3"]) * 1000.0) if obj.get("target_m3") is not None else None
+            (float(obj["target_m3"]) * 1000.0)
+            if obj.get("target_m3") is not None
+            else None
         )
         self.data.target_date = obj.get("target_date")
-        self.data.battery_y = float(obj["battery_y"]) if obj.get("battery_y") is not None else None
+        self.data.battery_y = (
+            float(obj["battery_y"]) if obj.get("battery_y") is not None else None
+        )
         self.data.status = obj.get("status")
         self.data.power_mode = obj.get("power_mode")
-        self.data.rssi_dbm = float(obj["rssi_dbm"]) if obj.get("rssi_dbm") is not None else None
+        self.data.rssi_dbm = (
+            float(obj["rssi_dbm"]) if obj.get("rssi_dbm") is not None else None
+        )
         self.data.meter_id = str(obj.get("id")) if obj.get("id") is not None else None
         self.data.last_payload_ts = obj.get("timestamp")
         self.data.last_rx_utc = now_utc
@@ -153,4 +167,45 @@ class WaterSaverCoordinator:
         # Week boundary (Monday)
         if self.periods.start_total_l_week is None:
             self.periods.start_total_l_week = total_l
-        if local.weekday() == 0 and local.hour ==
+        if (
+            local.weekday() == 0
+            and local.hour == 0
+            and local.minute == 0
+            and local.second < 10
+        ):
+            self.periods.start_total_l_week = total_l
+
+        # Month boundary
+        if self.periods.start_total_l_month is None:
+            self.periods.start_total_l_month = total_l
+        if local.day == 1 and local.hour == 0 and local.minute == 0 and local.second < 10:
+            self.periods.start_total_l_month = total_l
+
+        # Year boundary
+        if self.periods.start_total_l_year is None:
+            self.periods.start_total_l_year = total_l
+        if (
+            local.month == 1
+            and local.day == 1
+            and local.hour == 0
+            and local.minute == 0
+            and local.second < 10
+        ):
+            self.periods.start_total_l_year = total_l
+
+        # Deltas
+        self.data.hour_l = max(
+            0.0, total_l - (self.periods.start_total_l_hour or total_l)
+        )
+        self.data.day_l = max(
+            0.0, total_l - (self.periods.start_total_l_day or total_l)
+        )
+        self.data.week_l = max(
+            0.0, total_l - (self.periods.start_total_l_week or total_l)
+        )
+        self.data.month_l = max(
+            0.0, total_l - (self.periods.start_total_l_month or total_l)
+        )
+        self.data.year_l = max(
+            0.0, total_l - (self.periods.start_total_l_year or total_l)
+        )
