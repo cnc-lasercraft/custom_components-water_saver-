@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -9,9 +10,10 @@ from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_NAME, CONF_TOPIC
+from .const import CONF_NAME, CONF_TOPIC, DOMAIN
 from .storage import PeriodState, WaterSaverStore
 
 LOGGER = logging.getLogger(__name__)
@@ -39,37 +41,38 @@ class WaterData:
     last_seen_min: int | None = None
 
 
-class WaterSaverCoordinator:
+class WaterSaverCoordinator(DataUpdateCoordinator[WaterData]):
+    """Push-based coordinator fed by MQTT (no polling)."""
+
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
 
-        # IMPORTANT:
-        # Config values may live in entry.data (initial) or entry.options (after edits).
+        # Values may be stored in entry.data (initial) or entry.options (after edits).
         self.name = entry.options.get(CONF_NAME, entry.data.get(CONF_NAME))
         self.topic = entry.options.get(CONF_TOPIC, entry.data.get(CONF_TOPIC))
+
+        super().__init__(
+            hass=hass,
+            logger=LOGGER,
+            name=f"{DOMAIN}:{self.name}",
+            update_interval=None,  # push-based
+        )
 
         self.store = WaterSaverStore(hass)
         self.periods: PeriodState | None = None
 
-        self.data = WaterData()
         self._unsub_mqtt = None
         self._unsub_tick = None
 
-        self._listeners: list[callable] = []
-
-    def add_listener(self, cb: callable) -> None:
-        self._listeners.append(cb)
-
-    def _notify(self) -> None:
-        for cb in list(self._listeners):
-            cb()
+        # Coordinator data starts as empty -> sensors will show unknown until first telegram.
+        self.async_set_updated_data(WaterData())
 
     async def async_initialize(self) -> None:
         self.periods = await self.store.async_load()
 
-        LOGGER.warning(
-            "Water Saver init: subscribing to topic=%r name=%r (entry_id=%s)",
+        LOGGER.debug(
+            "Water Saver init: subscribing to topic=%r name=%r entry_id=%s",
             self.topic,
             self.name,
             self.entry.entry_id,
@@ -77,12 +80,8 @@ class WaterSaverCoordinator:
 
         @callback
         def _msg_received(msg: mqtt.ReceiveMessage) -> None:
-            # Debug: prove we receive messages
-            LOGGER.warning(
-                "Water Saver RX: topic=%r payload=%s",
-                getattr(msg, "topic", None),
-                msg.payload,
-            )
+            # Debug only; keep logs quiet by default.
+            LOGGER.debug("Water Saver RX topic=%r payload=%s", getattr(msg, "topic", None), msg.payload)
             self._handle_payload(msg.payload)
 
         self._unsub_mqtt = await mqtt.async_subscribe(
@@ -93,7 +92,7 @@ class WaterSaverCoordinator:
             encoding="utf-8",
         )
 
-        # Update "last_seen_min" every minute
+        # Update last_seen_min every minute
         self._unsub_tick = async_track_time_interval(
             self.hass,
             self._tick_last_seen,
@@ -114,71 +113,56 @@ class WaterSaverCoordinator:
 
     @callback
     def _tick_last_seen(self, _now: datetime) -> None:
-        if self.data.last_rx_utc is None:
+        d = self.data
+        if d.last_rx_utc is None:
             return
 
-        mins = int((dt_util.utcnow() - self.data.last_rx_utc).total_seconds() // 60)
-        if self.data.last_seen_min != mins:
-            self.data.last_seen_min = mins
-            self._notify()
+        mins = int((dt_util.utcnow() - d.last_rx_utc).total_seconds() // 60)
+        if d.last_seen_min != mins:
+            self.async_set_updated_data(replace(d, last_seen_min=mins))
 
     def _handle_payload(self, payload: str) -> None:
         try:
-            import json
-
             obj: dict[str, Any] = json.loads(payload)
         except Exception as err:
-            LOGGER.warning("Water Saver: JSON decode failed (%s). Payload=%r", err, payload)
+            LOGGER.debug("Water Saver: JSON decode failed (%s). Payload=%r", err, payload)
             return
 
-        # Only care about telegram payloads
-        msg_type = obj.get("_")
-        if msg_type != "telegram":
-            LOGGER.warning("Water Saver: ignoring payload with _=%r (not 'telegram')", msg_type)
+        if obj.get("_") != "telegram":
             return
 
         total_m3 = obj.get("total_m3")
         if total_m3 is None:
-            LOGGER.warning("Water Saver: telegram missing total_m3. Keys=%s", list(obj.keys()))
             return
 
         total_l = float(total_m3) * 1000.0
         now_utc = dt_util.utcnow()
 
-        self.data.total_l = total_l
-        self.data.target_l = (
-            (float(obj["target_m3"]) * 1000.0)
-            if obj.get("target_m3") is not None
-            else None
-        )
-        self.data.target_date = obj.get("target_date")
-        self.data.battery_y = (
-            float(obj["battery_y"]) if obj.get("battery_y") is not None else None
-        )
-        self.data.status = obj.get("status")
-        self.data.power_mode = obj.get("power_mode")
-        self.data.rssi_dbm = (
-            float(obj["rssi_dbm"]) if obj.get("rssi_dbm") is not None else None
-        )
-        self.data.meter_id = str(obj.get("id")) if obj.get("id") is not None else None
-        self.data.last_payload_ts = obj.get("timestamp")
-        self.data.last_rx_utc = now_utc
-        self.data.last_seen_min = 0
+        # Update periods + deltas
+        hour_l, day_l, week_l, month_l, year_l = self._compute_period_deltas(total_l, now_utc)
 
-        # Compute period deltas
-        self._update_period_deltas(total_l, now_utc)
-
-        LOGGER.warning(
-            "Water Saver: updated total_l=%.1f hour_l=%s day_l=%s (meter_id=%s)",
-            self.data.total_l,
-            self.data.hour_l,
-            self.data.day_l,
-            self.data.meter_id,
+        new_data = WaterData(
+            total_l=total_l,
+            target_l=(float(obj["target_m3"]) * 1000.0) if obj.get("target_m3") is not None else None,
+            target_date=obj.get("target_date"),
+            battery_y=float(obj["battery_y"]) if obj.get("battery_y") is not None else None,
+            status=obj.get("status"),
+            power_mode=obj.get("power_mode"),
+            rssi_dbm=float(obj["rssi_dbm"]) if obj.get("rssi_dbm") is not None else None,
+            meter_id=str(obj.get("id")) if obj.get("id") is not None else None,
+            last_payload_ts=obj.get("timestamp"),
+            last_rx_utc=now_utc,
+            last_seen_min=0,
+            hour_l=hour_l,
+            day_l=day_l,
+            week_l=week_l,
+            month_l=month_l,
+            year_l=year_l,
         )
 
-        self._notify()
+        self.async_set_updated_data(new_data)
 
-    def _update_period_deltas(self, total_l: float, now_utc: datetime) -> None:
+    def _compute_period_deltas(self, total_l: float, now_utc: datetime) -> tuple[float, float, float, float, float]:
         assert self.periods is not None
 
         local = dt_util.as_local(now_utc)
@@ -209,12 +193,7 @@ class WaterSaverCoordinator:
         # Month boundary
         if self.periods.start_total_l_month is None:
             self.periods.start_total_l_month = total_l
-        if (
-            local.day == 1
-            and local.hour == 0
-            and local.minute == 0
-            and local.second < 10
-        ):
+        if local.day == 1 and local.hour == 0 and local.minute == 0 and local.second < 10:
             self.periods.start_total_l_month = total_l
 
         # Year boundary
@@ -229,9 +208,10 @@ class WaterSaverCoordinator:
         ):
             self.periods.start_total_l_year = total_l
 
-        # Deltas
-        self.data.hour_l = max(0.0, total_l - (self.periods.start_total_l_hour or total_l))
-        self.data.day_l = max(0.0, total_l - (self.periods.start_total_l_day or total_l))
-        self.data.week_l = max(0.0, total_l - (self.periods.start_total_l_week or total_l))
-        self.data.month_l = max(0.0, total_l - (self.periods.start_total_l_month or total_l))
-        self.data.year_l = max(0.0, total_l - (self.periods.start_total_l_year or total_l))
+        hour_l = max(0.0, total_l - (self.periods.start_total_l_hour or total_l))
+        day_l = max(0.0, total_l - (self.periods.start_total_l_day or total_l))
+        week_l = max(0.0, total_l - (self.periods.start_total_l_week or total_l))
+        month_l = max(0.0, total_l - (self.periods.start_total_l_month or total_l))
+        year_l = max(0.0, total_l - (self.periods.start_total_l_year or total_l))
+
+        return hour_l, day_l, week_l, month_l, year_l
