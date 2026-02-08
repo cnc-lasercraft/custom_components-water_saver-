@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import Entity
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import WaterSaverCoordinator
@@ -21,32 +22,41 @@ SENSORS = [
 ]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     coordinator: WaterSaverCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = [WaterSaverSensor(coordinator, key, name, unit, dev_class, state_class) for key, name, unit, dev_class, state_class in SENSORS]
-    async_add_entities(entities)
+    async_add_entities(
+        [
+            WaterSaverSensor(coordinator, key, name, unit, dev_class, state_class)
+            for key, name, unit, dev_class, state_class in SENSORS
+        ]
+    )
 
 
-class WaterSaverSensor(Entity):
+class WaterSaverSensor(CoordinatorEntity[WaterSaverCoordinator], SensorEntity):
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator: WaterSaverCoordinator, key: str, name: str, unit: str | None, dev_class: str | None, state_class: str | None):
-        self.coordinator = coordinator
+    def __init__(
+        self,
+        coordinator: WaterSaverCoordinator,
+        key: str,
+        name: str,
+        unit: str | None,
+        dev_class: str | None,
+        state_class: str | None,
+    ) -> None:
+        super().__init__(coordinator)
         self.key = key
+
+        # Entity naming / IDs
         self._attr_name = name
         self._attr_unique_id = f"{coordinator.entry.entry_id}_{key}"
+
+        # Units/classes
         self._attr_native_unit_of_measurement = unit
         if dev_class:
             self._attr_device_class = dev_class
         if state_class:
             self._attr_state_class = state_class
-
-    async def async_added_to_hass(self):
-        @callback
-        def _updated():
-            self.async_write_ha_state()
-
-        self.coordinator.add_listener(_updated)
 
     @property
     def native_value(self):
@@ -54,7 +64,7 @@ class WaterSaverSensor(Entity):
 
     @property
     def extra_state_attributes(self):
-        # expose some raw fields on the "Total" sensor
+        # Put rich attributes on "Total"
         if self.key != "total_l":
             return None
         d = self.coordinator.data
