@@ -1,123 +1,95 @@
 from __future__ import annotations
 
-import json
-import logging
-from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
-from typing import Any
-
-from homeassistant.components import mqtt
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_time_interval
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util import dt as dt_util
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_NAME, CONF_TOPIC, DOMAIN
-
-LOGGER = logging.getLogger(__name__)
+from .const import DOMAIN
+from .coordinator import WaterSaverCoordinator
 
 
-@dataclass
-class WaterSaverData:
-    total_m3: float | None = None
-    battery_y: float | None = None
-    rssi_dbm: float | None = None
-    status: str | None = None
-    power_mode: str | None = None
-    meter_id: str | None = None
-    telegram_timestamp: str | None = None
-    last_rx_utc: datetime | None = None
-    last_seen_min: int | None = None
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
+    coordinator: WaterSaverCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    async_add_entities(
+        [
+            WaterSaverTotalM3Sensor(coordinator),
+            WaterSaverLastSeenMinSensor(coordinator),
+            WaterSaverBatteryYSensor(coordinator),
+            WaterSaverRssiSensor(coordinator),
+        ]
+    )
 
 
-class WaterSaverCoordinator(DataUpdateCoordinator[WaterSaverData]):
-    """Push-based coordinator fed by MQTT (no polling)."""
+class _Base(CoordinatorEntity[WaterSaverCoordinator], SensorEntity):
+    _attr_has_entity_name = True
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        self.hass = hass
-        self.entry = entry
+    def __init__(self, coordinator: WaterSaverCoordinator) -> None:
+        super().__init__(coordinator)
 
-        self.name = entry.options.get(CONF_NAME, entry.data.get(CONF_NAME))
-        self.topic = entry.options.get(CONF_TOPIC, entry.data.get(CONF_TOPIC))
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self.coordinator.entry.entry_id)},
+            "name": self.coordinator.name,
+            "manufacturer": "wmbusmeters",
+            "model": "MQTT water meter",
+        }
 
-        super().__init__(
-            hass=hass,
-            logger=LOGGER,
-            name=f"{DOMAIN}:{self.name}",
-            update_interval=None,
-        )
 
-        self._unsub_mqtt = None
-        self._unsub_tick = None
+class WaterSaverTotalM3Sensor(_Base):
+    _attr_name = "Total"
+    _attr_unique_id = "water_saver_total_m3"
+    _attr_native_unit_of_measurement = "m³"
+    _attr_device_class = "water"
+    _attr_state_class = "total_increasing"
 
-        self.async_set_updated_data(WaterSaverData())
+    @property
+    def native_value(self):
+        return self.coordinator.data.total_m3
 
-    async def async_initialize(self) -> None:
-        LOGGER.debug("Water Saver subscribing to MQTT topic=%r", self.topic)
+    @property
+    def extra_state_attributes(self):
+        d = self.coordinator.data
+        return {
+            "meter_id": d.meter_id,
+            "status": d.status,
+            "power_mode": d.power_mode,
+            "telegram_timestamp": d.telegram_timestamp,
+            "rssi_dbm": d.rssi_dbm,
+            "battery_y": d.battery_y,
+        }
 
-        @callback
-        def _msg_received(msg: mqtt.ReceiveMessage) -> None:
-            self._handle_payload(msg.payload)
 
-        self._unsub_mqtt = await mqtt.async_subscribe(
-            self.hass,
-            self.topic,
-            _msg_received,
-            qos=0,
-            encoding="utf-8",
-        )
+class WaterSaverLastSeenMinSensor(_Base):
+    _attr_name = "Last seen"
+    _attr_unique_id = "water_saver_last_seen_min"
+    _attr_native_unit_of_measurement = "min"
+    _attr_state_class = "measurement"
 
-        self._unsub_tick = async_track_time_interval(
-            self.hass,
-            self._tick_last_seen,
-            timedelta(minutes=1),
-        )
+    @property
+    def native_value(self):
+        return self.coordinator.data.last_seen_min
 
-    async def async_shutdown(self) -> None:
-        if self._unsub_mqtt:
-            self._unsub_mqtt()
-            self._unsub_mqtt = None
 
-        if self._unsub_tick:
-            self._unsub_tick()
-            self._unsub_tick = None
+class WaterSaverBatteryYSensor(_Base):
+    _attr_name = "Battery"
+    _attr_unique_id = "water_saver_battery_y"
+    _attr_native_unit_of_measurement = "y"
+    _attr_state_class = "measurement"
 
-    @callback
-    def _tick_last_seen(self, _now: datetime) -> None:
-        d = self.data
-        if d.last_rx_utc is None:
-            return
+    @property
+    def native_value(self):
+        return self.coordinator.data.battery_y
 
-        mins = int((dt_util.utcnow() - d.last_rx_utc).total_seconds() // 60)
-        if d.last_seen_min != mins:
-            self.async_set_updated_data(replace(d, last_seen_min=mins))
 
-    def _handle_payload(self, payload: str) -> None:
-        try:
-            obj: dict[str, Any] = json.loads(payload)
-        except Exception:
-            return
+class WaterSaverRssiSensor(_Base):
+    _attr_name = "RSSI"
+    _attr_unique_id = "water_saver_rssi_dbm"
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_state_class = "measurement"
 
-        if obj.get("_") != "telegram":
-            return
-
-        total_m3 = obj.get("total_m3")
-        if total_m3 is None:
-            return
-
-        now_utc = dt_util.utcnow()
-
-        new_data = WaterSaverData(
-            total_m3=float(total_m3),
-            battery_y=float(obj["battery_y"]) if obj.get("battery_y") is not None else None,
-            rssi_dbm=float(obj["rssi_dbm"]) if obj.get("rssi_dbm") is not None else None,
-            status=obj.get("status"),
-            power_mode=obj.get("power_mode"),
-            meter_id=str(obj.get("id")) if obj.get("id") is not None else None,
-            telegram_timestamp=obj.get("timestamp"),
-            last_rx_utc=now_utc,
-            last_seen_min=0,
-        )
-
-        self.async_set_updated_data(new_data)
+    @property
+    def native_value(self):
+        return self.coordinator.data.rssi_dbm
