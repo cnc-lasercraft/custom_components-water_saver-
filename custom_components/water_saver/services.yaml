@@ -1,0 +1,19 @@
+snooze:
+  name: Snooze alerts
+  description: Temporarily suppress all Water Saver alerts for a number of hours.
+  fields:
+    hours:
+      name: Hours
+      description: Number of hours to snooze (default from config).
+      required: false
+      example: 4
+      selector:
+        number:
+          min: 1
+          max: 72
+          step: 1
+          unit_of_measurement: h
+
+unsnooze:
+  name: Cancel snooze
+  description: Immediately cancel any active snooze and re-enable alerts.

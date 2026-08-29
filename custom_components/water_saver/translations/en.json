@@ -3,12 +3,46 @@
     "step": {
       "user": {
         "title": "Water Saver",
-        "description": "Liest Wasserverbrauch aus einem MQTT JSON Topic (z.B. wmbusmeters/Wasser).",
+        "description": "Read water consumption from an MQTT JSON topic (e.g. wmbusmeters/Wasser).",
         "data": {
           "name": "Name",
           "topic": "MQTT Topic"
         }
       }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Water Saver Settings",
+        "data": {
+          "name": "Name",
+          "topic": "MQTT Topic",
+          "unavailable_timeout_min": "Unavailable timeout (minutes)",
+          "leak_hours": "Leak detection: consecutive hours",
+          "today_high_multiplier": "Today high: multiplier vs 14d average",
+          "today_high_min_l": "Today high: minimum liters",
+          "today_high_buffer_l": "Today high: buffer liters added to average",
+          "today_high_after_hour": "Today high: only evaluate after hour",
+          "snooze_default_hours": "Default snooze duration (hours)"
+        }
+      }
+    }
+  },
+  "services": {
+    "snooze": {
+      "name": "Snooze alerts",
+      "description": "Temporarily suppress all Water Saver alerts.",
+      "fields": {
+        "hours": {
+          "name": "Hours",
+          "description": "Number of hours to snooze."
+        }
+      }
+    },
+    "unsnooze": {
+      "name": "Cancel snooze",
+      "description": "Immediately cancel any active snooze."
     }
   }
 }

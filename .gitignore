@@ -1,25 +1,21 @@
+# macOS (this volume is not HFS+, so AppleDouble sidecars are created)
+._*
+.DS_Store
+
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.egg-info/
+build/
+dist/
 
 # Virtual envs
 .venv/
 venv/
-ENV/
 env/
-
-# Build / packaging
-build/
-dist/
-*.egg-info/
-
-# Logs
-*.log
-
-# macOS
-.DS_Store
+ENV/
 
 # Editors
 .vscode/
@@ -28,3 +24,15 @@ dist/
 # Home Assistant dev stuff
 .storage/
 home-assistant_v2.db*
+*.log
+
+# Local host access — NEVER commit
+ha_key
+ha_key.pub
+*.pem
+id_*
+ssh_config_has
+
+# Local tooling / private working notes (contain deploy host details)
+.claude/settings.local.json
+CLAUDE.md

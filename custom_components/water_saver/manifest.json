@@ -1,11 +1,13 @@
 {
   "domain": "water_saver",
   "name": "Water Saver",
-  "version": "0.0.1",
-  "documentation": "https://github.com/cnc-lasercraft/water_saver",
-  "requirements": [],
-  "dependencies": ["mqtt"],
+  "after_dependencies": ["herold"],
   "codeowners": ["@cnc-lasercraft"],
   "config_flow": true,
-  "iot_class": "local_push"
+  "dependencies": ["mqtt"],
+  "documentation": "https://github.com/cnc-lasercraft/water_saver",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/cnc-lasercraft/water_saver/issues",
+  "requirements": [],
+  "version": "0.1.0"
 }
