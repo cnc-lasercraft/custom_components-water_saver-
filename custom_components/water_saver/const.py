@@ -32,11 +32,12 @@ DEFAULT_TODAY_HIGH_AFTER_HOUR = 8  # only evaluate after this hour (local time)
 # today's total before the today-high threshold is evaluated. This prevents
 # known large draws (lawn irrigation, pool refill) from triggering false alarms.
 # Counter resets at the day boundary.
+#
+# Empty by default: these are entirely installation-specific. Pick your own in
+# the options flow — typically an irrigation valve switch and/or a pool refill
+# flow sensor.
 CONF_EXCLUDE_ENTITIES = "exclude_entities"
-DEFAULT_EXCLUDE_ENTITIES = [
-    "switch.shelly_pro_3_hv_02_switch_2",  # Rasenbewässerung Ventil
-    "sensor.pool_nachfull_durchfluss",     # Pool-Nachfüllung Durchfluss (L/h)
-]
+DEFAULT_EXCLUDE_ENTITIES: list[str] = []
 
 # Exclusion grace window (minutes). The water meter reports consumption with a
 # lag and in lumps: a pool/lawn draw often lands in the meter total several

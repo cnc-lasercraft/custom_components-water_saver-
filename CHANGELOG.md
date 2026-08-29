@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-08-30
+
+### Fixed
+- `DEFAULT_EXCLUDE_ENTITIES` no longer ships hard-coded entity IDs from the
+  author's own installation. The default is now empty — exclusion entities are
+  installation-specific and are picked in the options flow. Existing setups are
+  unaffected: the options flow stores the list explicitly, so the default was
+  never consulted.
+
 ## [0.1.0] - 2026-08-30
 
 First release intended for general use. The 0.0.x line was an early prototype
@@ -54,5 +63,6 @@ computed inside the integration and persisted across restarts.
 - Early prototype: MQTT JSON ingest, total / hour / day / week / month / year
   sensors, last seen, RSSI, battery, and a config flow for name and topic.
 
+[0.1.1]: https://github.com/cnc-lasercraft/water_saver/releases/tag/v0.1.1
 [0.1.0]: https://github.com/cnc-lasercraft/water_saver/releases/tag/v0.1.0
 [0.0.10]: https://github.com/cnc-lasercraft/water_saver/releases/tag/v0.0.10
