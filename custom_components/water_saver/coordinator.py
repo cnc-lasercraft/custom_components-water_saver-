@@ -310,15 +310,27 @@ class WaterSaverCoordinator(DataUpdateCoordinator[WaterSaverData]):
         return False
 
     def _exclude_window_open(self, now_utc: datetime) -> bool:
-        """True while a lawn/pool draw is active OR still within the grace period
-        after it closed. The meter reports consumption with a lag / in lumps, so
-        the delayed draw often lands minutes after the valve is already off — the
-        grace window keeps the subtraction (and today-high suppression) alive
-        long enough to catch it. While active, the deadline is pushed forward."""
+        """True while a lawn/pool draw is active, still within the grace period
+        after it closed, or still waiting for the telegram that books the tail
+        of the draw. The meter reports consumption with a lag and in lumps, so
+        the water drawn shortly before the valve closed lands in a LATER
+        telegram — the window keeps the subtraction (and today-high
+        suppression) alive long enough to catch it. While active, the grace
+        deadline is pushed forward.
+
+        Two independent conditions keep the window open after the draw ends:
+        the grace period (a time floor, so meters that report faster than the
+        grace can book the lump across several telegrams) and the settle flag
+        (no floor, so meters that report SLOWER than the grace still get their
+        one trailing telegram counted). Without the flag a meter reporting
+        hourly would leave everything drawn after the last in-window telegram
+        in today's effective volume."""
         if self._exclude_active:
             self._period.exclude_grace_until = (
                 now_utc + timedelta(minutes=self.exclude_grace_min)
             ).isoformat()
+            return True
+        if self._period.exclude_settle_pending:
             return True
         until = (
             _parse_iso(self._period.exclude_grace_until)
@@ -340,6 +352,9 @@ class WaterSaverCoordinator(DataUpdateCoordinator[WaterSaverData]):
         self._period.exclude_grace_until = (
             now_utc + timedelta(minutes=self.exclude_grace_min)
         ).isoformat()
+        # Closing the valve arms the settle flag: the window must survive until
+        # one more telegram has been booked, however long the meter takes.
+        self._period.exclude_settle_pending = not active
         self.async_set_updated_data(
             replace(
                 self.data,
@@ -391,6 +406,13 @@ class WaterSaverCoordinator(DataUpdateCoordinator[WaterSaverData]):
                 )
                 # Persist promptly (debounced) so a restart mid-window doesn't
                 # lose the accumulated exclusion or the grace deadline.
+                need_save = True
+            # The draw is over and this telegram carried its tail — the settle
+            # flag has done its job. The grace deadline (if still running) can
+            # keep the window open on its own; this telegram itself is still
+            # treated as in-window.
+            if not self._exclude_active and self._period.exclude_settle_pending:
+                self._period.exclude_settle_pending = False
                 need_save = True
 
         # Store last known total_l (survives unavailable periods)
@@ -514,6 +536,10 @@ class WaterSaverCoordinator(DataUpdateCoordinator[WaterSaverData]):
             p.start_total_l_day = total_l
             p.last_day_boundary = now_local.isoformat()
             p.excluded_today_l = 0.0  # new day → reset excluded volume
+            # Bound the settle flag to the day it was armed in: this telegram
+            # restarts day_l from zero, so yesterday's tail can no longer
+            # distort today's total and must not hold the window open.
+            p.exclude_settle_pending = False
             changed = True
 
         # Week boundary (Monday = 0)

@@ -44,6 +44,12 @@ DEFAULT_EXCLUDE_ENTITIES: list[str] = []
 # minutes AFTER the valve already closed. Keep the exclusion window "open" for
 # this many minutes after the last active moment so those delayed lumps are
 # still subtracted (and today-high stays suppressed until they settle).
+#
+# This is a floor, not a deadline: the window also stays open until one
+# telegram has been booked since the draw ended, so a meter that reports less
+# often than the grace period (hourly, say) still gets the tail of the draw
+# subtracted. Raising this only matters for meters that report FASTER than the
+# grace and need several telegrams to book the whole lump.
 CONF_EXCLUDE_GRACE_MIN = "exclude_grace_min"
 DEFAULT_EXCLUDE_GRACE_MIN = 20
 

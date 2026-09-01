@@ -52,6 +52,12 @@ class PeriodState:
     # period after the last active lawn/pool moment). None = window closed.
     exclude_grace_until: str | None = None
 
+    # True from the moment a lawn/pool draw goes inactive until one telegram
+    # has been booked against it. Keeps the exclusion window open across a
+    # meter reporting interval that is longer than the grace period, so the
+    # tail of the draw still gets subtracted. Cleared on a day rollover.
+    exclude_settle_pending: bool = False
+
 
 class WaterSaverStore:
     def __init__(self, hass: HomeAssistant) -> None:
@@ -94,6 +100,7 @@ def _migrate(data: dict[str, Any]) -> PeriodState:
         snooze_until=data.get("snooze_until"),
         excluded_today_l=data.get("excluded_today_l", 0.0),
         exclude_grace_until=data.get("exclude_grace_until"),
+        exclude_settle_pending=data.get("exclude_settle_pending", False),
     )
 
 
@@ -120,4 +127,5 @@ def _serialize(state: PeriodState) -> dict[str, Any]:
         "snooze_until": state.snooze_until,
         "excluded_today_l": state.excluded_today_l,
         "exclude_grace_until": state.exclude_grace_until,
+        "exclude_settle_pending": state.exclude_settle_pending,
     }

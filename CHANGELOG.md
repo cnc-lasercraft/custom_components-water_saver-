@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-09-01
+
+### Fixed
+- **Pool / irrigation exclusion now covers the tail of a draw.** The exclusion
+  window used to close purely on a grace timer (default 20 min) after the valve
+  went off. Meters that report less often than that — a wM-Bus meter sending
+  one telegram per hour, for instance — book most of the draw in a telegram
+  that arrives *after* the window has closed, so it landed in today's effective
+  volume and could trigger a today-high false alarm on every irrigation run.
+  The window now also stays open until exactly one telegram has been booked
+  since the draw ended, however long the meter takes. The grace period is kept
+  as a time floor for meters that report faster than it, so both cadences are
+  covered. The flag is cleared at the day boundary, which bounds it to the day
+  it was armed in.
+
 ## [0.1.1] - 2026-08-30
 
 ### Fixed
